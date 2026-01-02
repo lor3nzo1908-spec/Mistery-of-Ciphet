@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, orientation=landscape">
+    <title>Mystery of Cipher</title>
+    <style>
+        :root { --gba-shell: #ffffff; --gba-border: #e0e0e0; }
+        body { margin: 0; padding: 0; background: #000; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: 'Courier New', monospace; overflow: hidden; touch-action: none; }
+        #gba { width: 100vw; height: 100vh; background: var(--gba-shell); display: grid; grid-template-columns: 1.3fr 2fr 1.3fr; grid-template-rows: 40px 1fr 60px; box-sizing: border-box; border: 10px solid var(--gba-border); border-radius: 50px; }
+        #screen-container { grid-column: 2; grid-row: 2; background: #000; padding: 10px; border-radius: 12px; border: 5px solid #333; display: flex; flex-direction: column; position: relative; overflow: hidden; }
+        
+        #ui-text { color: #ffbb00; display: flex; justify-content: space-between; padding: 2px 5px; font-weight: bold; font-size: 11px; z-index: 10; text-shadow: 1px 1px #000; }
+        .bar-container { width: 50px; height: 8px; background: #333; border: 1px solid #ffbb00; }
+        #special-bar { width: 0%; height: 100%; background: #fff; box-shadow: 0 0 8px #fff; transition: width 0.2s; }
+        #player-hp-bar { width: 100%; height: 100%; background: #0f0; }
+        
+        #boss-ui { position: absolute; top: 35px; left: 50%; transform: translateX(-50%); width: 80%; display: none; flex-direction: column; align-items: center; z-index: 15; }
+        #boss-hp-container { width: 100%; height: 8px; background: #200; border: 2px solid #f00; }
+        #boss-hp-fill { width: 100%; height: 100%; background: #f00; }
+        
+        canvas { flex: 1; background-color: #1a1a1a; width: 100%; image-rendering: pixelated; border: 1px solid #222; }
+        
+        .left-controls { grid-column: 1; grid-row: 2; display: flex; justify-content: center; align-items: center; }
+        #dpad { width: 150px; height: 150px; background: #333; clip-path: polygon(35% 0, 65% 0, 65% 35%, 100% 35%, 100% 65%, 65% 65%, 65% 100%, 35% 100%, 35% 65%, 0 65%, 0 35%, 35% 35%); touch-action: none;}
+        
+        .right-controls { grid-column: 3; grid-row: 2; display: flex; position: relative; justify-content: center; align-items: center; }
+        .btn-circle { width: 85px; height: 85px; border-radius: 50%; display: flex; justify-content: center; align-items: center; color: #fff; font-weight: bold; font-size: 32px; box-shadow: 3px 5px 0px #bbb; position: absolute; }
+        #btn-B { background: #600; transform: translate(-50px, 40px); } 
+        #btn-A { background: #600; transform: translate(40px, -40px); }
+        
+        #overlay, #victory-screen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 20; color: #ffbb00; text-align: center; }
+        #victory-screen { display: none; background: #000; color: #fff; }
+        #victory-img { max-width: 80%; max-height: 60%; border: 3px solid #ffbb00; margin-bottom: 10px; }
+        
+        button { background: #ffbb00; color: #000; border: none; padding: 15px 30px; font-weight: bold; cursor: pointer; border-radius: 5px; font-size: 16px; }
+    </style>
+</head>
+<body>
+    <div id="gba">
+        <div class="left-controls"><div id="dpad"></div></div>
+        <div id="screen-container">
+            <div id="ui-text">
+                <div>FASE: <span id="phase-ui">1</span></div>
+                <div style="display:flex">SP: <div class="bar-container"><div id="special-bar"></div></div></div>
+                <div style="display:flex">HP: <div class="bar-container"><div id="player-hp-bar"></div></div></div>
+            </div>
+            
+            <div id="boss-ui">
+                <div style="color:#f00; font-size:9px; font-weight:bold">AXOLOTI</div>
+                <div id="boss-hp-container"><div id="boss-hp-fill"></div></div>
+            </div>
+
+            <canvas id="gameCanvas"></canvas>
+            
+            <div id="overlay">
+                <h1 style="font-size: 24px;">Mystery of Cipher</h1>
+                <p>O Olho que Tudo Vê espera por você.</p>
+                <button id="start-btn">INICIAR RITUAL</button>
+            </div>
+
+            <div id="victory-screen">
+                <h2>O CÓDIGO FOI DECIFRADO!</h2>
+                <img id="victory-img" src="https://i.imgur.com/8Nf9yLd.png" alt="Vitória">
+                <button onclick="location.reload()">RECOMEÇAR</button>
+            </div>
+        </div>
+        <div class="right-controls">
+            <div id="btn-B" class="btn-circle">B</div>
+            <div id="btn-A" class="btn-circle">A</div>
+        </div>
+    </div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const dpad = document.getElementById('dpad');
+    canvas.width = 240; canvas.height = 160;
+
+    let gameActive = false, frameCount = 0;
+    let currentPhase = 1, phaseKills = 0;
+    let specialCharge = 0, specialTimer = 0;
+    let player = { x: 35, y: 80, targetY: 80, hp: 100 };
+    let bullets = [], enemies = [], enemyBullets = [], trees = [{x: 40}, {x: 120}, {x: 200}, {x: 280}];
+    let boss = null;
+
+    function handleInput(e) {
+        if (!gameActive) return;
+        const rect = dpad.getBoundingClientRect();
+        const touch = e.touches ? e.touches[0] : e;
+        const cy = touch.clientY - rect.top;
+        player.targetY = Math.max(20, Math.min(140, (cy / rect.height) * canvas.height));
+    }
+    dpad.addEventListener('touchstart', (e) => { e.preventDefault(); handleInput(e); });
+    dpad.addEventListener('touchmove', (e) => { e.preventDefault(); handleInput(e); });
+
+    function drawBackground() {
+        // Céu mais visível (marrom escuro/vinho)
+        ctx.fillStyle = "#2b1a0a"; ctx.fillRect(0,0,240,160);
+        
+        trees.forEach(t => {
+            t.x -= 1; if(t.x < -40) t.x = 280;
+            // Tronco mais claro
+            ctx.fillStyle = "#1a0f00"; ctx.beginPath(); ctx.moveTo(t.x, 80); ctx.lineTo(t.x-15, 160); ctx.lineTo(t.x+15, 160); ctx.fill();
+            // Fogo mais nítido
+            ctx.fillStyle = (frameCount % 10 > 5) ? "#ff6600" : "#ffaa00";
+            ctx.beginPath(); ctx.moveTo(t.x, 80); ctx.lineTo(t.x-12, 105); ctx.lineTo(t.x+12, 105); ctx.fill();
+        });
+    }
+
+    function drawPlayer(x, y) {
+        // Aura Branca Nítida
+        ctx.fillStyle = "rgba(255,255,255,0.25)"; ctx.beginPath(); ctx.arc(x,y,32 + Math.sin(frameCount*0.15)*4,0,Math.PI*2); ctx.fill();
+        // Bill Cipher
+        ctx.fillStyle = "#000"; ctx.beginPath(); ctx.moveTo(x,y-15); ctx.lineTo(x-15,y+15); ctx.lineTo(x+15,y+15); ctx.fill();
+        // Olho com Animação Corrigida
+        const blink = (frameCount % 140 > 130);
+        ctx.fillStyle = blink ? "#000" : "#fff";
+        ctx.beginPath(); ctx.ellipse(x, y+2, 7, 4.5, 0, 0, Math.PI*2); ctx.fill();
+        if(!blink) { ctx.fillStyle = "#000"; ctx.beginPath(); ctx.arc(x, y+2, 2.5, 0, Math.PI*2); ctx.fill(); }
+    }
+
+    function update() {
+        drawBackground();
+        if (!gameActive) { requestAnimationFrame(update); return; }
+        frameCount++;
+        player.y += (player.targetY - player.y) * 0.12;
+
+        if (specialTimer > 0) {
+            specialTimer--;
+            ctx.fillStyle = "rgba(255,255,255,"+(specialTimer/50)+")"; ctx.fillRect(0,0,240,160);
+        }
+
+        drawPlayer(player.x, player.y);
+
+        if(phaseKills >= 10 && currentPhase < 3) {
+            currentPhase++; phaseKills = 0;
+            document.getElementById('phase-ui').innerText = currentPhase;
+            if(currentPhase === 3) { 
+                boss = { x: 180, y: 80, hp: 600, max: 600, dir: 1 }; 
+                document.getElementById('boss-ui').style.display='flex';
+            }
+        }
+
+        bullets.forEach((b, i) => {
+            b.x += 6.5; ctx.fillStyle="#fff"; ctx.fillRect(b.x, b.y, 7, 2);
+            if(b.x > 240) bullets.splice(i,1);
+            else if(boss && Math.hypot(b.x-boss.x, b.y-boss.y) < 25) {
+                boss.hp -= 5; bullets.splice(i,1);
+                specialCharge = Math.min(100, specialCharge + 2);
+                document.getElementById('boss-hp-fill').style.width = (boss.hp/boss.max*100)+"%";
+                if(boss.hp <= 0) { gameActive = false; document.getElementById('victory-screen').style.display = 'flex'; }
+            }
+        });
+
+        if(!boss && frameCount % 70 === 0) {
+            enemies.push({ x: 250, y: 20 + Math.random()*120, s: 1.6, shoot: currentPhase >= 2 });
+        }
+
+        enemies.forEach((en, i) => {
+            en.x -= en.s; 
+            ctx.fillStyle="#000"; ctx.fillRect(en.x-10, en.y-10, 20, 20);
+            ctx.fillStyle="#f00"; ctx.fillRect(en.x-6, en.y-4, 3, 3); ctx.fillRect(en.x+3, en.y-4, 3, 3);
+            if(en.shoot && frameCount % 110 === 0) enemyBullets.push({x:en.x, y:en.y, sx:-2.2});
+
+            bullets.forEach((b, bi) => {
+                if(Math.hypot(b.x - en.x, b.y - en.y) < 15) {
+                    enemies.splice(i, 1); bullets.splice(bi, 1);
+                    phaseKills++; specialCharge = Math.min(100, specialCharge + 10);
+                }
+            });
+            if(Math.hypot(player.x-en.x, player.y-en.y) < 18) { player.hp -= 15; enemies.splice(i,1); }
+        });
+
+        enemyBullets.forEach((eb, i) => {
+            eb.x += eb.sx; ctx.fillStyle="#ffff00"; ctx.beginPath(); ctx.arc(eb.x, eb.y, 2.5, 0, Math.PI*2); ctx.fill();
+            if(Math.hypot(player.x-eb.x, player.y-eb.y) < 10) { player.hp -= 8; enemyBullets.splice(i,1); }
+            if(eb.x < -10) enemyBullets.splice(i, 1);
+        });
+
+        if(boss) {
+            ctx.fillStyle = "#ffb6c1"; ctx.beginPath(); ctx.ellipse(boss.x, boss.y, 32, 20, 0, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = "#ff1493"; for(let j=-1; j<=1; j+=2) { ctx.fillRect(boss.x+(j*25), boss.y-18, 7, 14); }
+            ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(boss.x-12, boss.y-5, 6, 0, Math.PI*2); ctx.arc(boss.x+12, boss.y-5, 6, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = "#000"; ctx.beginPath(); ctx.arc(boss.x-12, boss.y-5, 3, 0, Math.PI*2); ctx.arc(boss.x+12, boss.y-5, 3, 0, Math.PI*2); ctx.fill();
+            boss.y += boss.dir * 1.2;
+            if(boss.y > 130 || boss.y < 30) boss.dir *= -1;
+            if(frameCount % 90 === 0) enemyBullets.push({x:boss.x, y:boss.y, sx:-2.5});
+        }
+
+        document.getElementById('special-bar').style.width = specialCharge + "%";
+        document.getElementById('player-hp-bar').style.width = player.hp + "%";
+        if(player.hp <= 0) location.reload();
+        
+        requestAnimationFrame(update);
+    }
+
+    document.getElementById('start-btn').onclick = () => { gameActive = true; document.getElementById('overlay').style.display = 'none'; };
+    document.getElementById('btn-A').onclick = () => { if(gameActive) bullets.push({x:player.x+15, y:player.y}); };
+    document.getElementById('btn-B').onclick = () => { if(specialCharge>=100) { specialCharge=0; specialTimer=50; enemies=[]; enemyBullets=[]; }};
+    update();
+</script>
+</body>
+</html>
